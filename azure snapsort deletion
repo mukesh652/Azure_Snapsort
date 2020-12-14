@@ -1,0 +1,201 @@
+import argparse
+import os
+from azure.identity import AzureCliCredential
+from azure.mgmt.resource import ResourceManagementClient
+from azure.mgmt.network import NetworkManagementClient
+from azure.mgmt.compute import ComputeManagementClient
+from azure.mgmt.compute.models import DiskCreateOption
+from azure.common.credentials import ServicePrincipalCredentials
+from datetime import datetime
+import collections
+import datetime
+import time
+import sys
+import os.path
+from os import path
+import subprocess
+
+#today = datetime.date.today()
+today_string = time.strftime('%Y%m%d_%H%M%S')
+
+today = datetime.date.today()
+#today_string = today.strftime('%Y/%m/%d')
+
+
+delete_after_days = 0  # Delete snapshots after these many days
+
+
+# Except after Monday (at Tuesday ~1am), since Friday is only 2 'working' days away:
+if datetime.date.today().weekday() == 1:
+    delete_after_days = delete_after_days + 2
+
+deletion_date = today - datetime.timedelta(days=delete_after_days)
+deletion_date_string = deletion_date.strftime('%Y/%m/%d')
+
+print(f"deletion_date_string is {deletion_date_string}")
+
+clientid=''
+secret=''
+tenantid=''
+#vmname=''
+#group_name=''
+subscriptionid=''
+
+credential = ServicePrincipalCredentials(
+client_id=clientid,
+secret=secret,
+tenant=tenantid
+)
+compute_client = ComputeManagementClient(credential, subscriptionid)
+#print(compute_client)
+# tag_name = "Autosnap"
+# tag_value = "True"
+
+#snap_list=compute_client.snapshots.list_by_resource_group("RG-SEGNER-LAB")
+# snap_list=compute_client.snapshots.list(filter=f"tagName eq 'Autosnap' and tagValue eq 'True'")
+#snap_list=compute_client.snapshots.list(filter=f"tagName eq '{tag_name}' and tagValue eq '{tag_value}'")
+# snap_list=compute_client.snapshots.list(filter="tag_Name eq 'Autosnap' and tag_Value eq 'True'")
+snap_list=compute_client.snapshots.list()
+
+#print(snap_list)
+#24
+#{'Autosnap': 'True'}    and time_created >= '  2020-12-13 06:34:10.246590+00:00'
+
+# if datetime.date.today().weekday() == 1:
+#     #print(datetime.date.today().weekday())
+#     delete_after_days = delete_after_days + 3
+#     deletion_date = today - datetime.timedelta(days=delete_after_days)
+#     print("Deletion date is"+" "+str(deletion_date))
+#     deletion_date_string = deletion_date.strftime('%Y/%m/%d')
+#     print(deletion_date_string)
+
+for snap in snap_list: 
+    time_created= datetime.datetime.strptime(str(snap.time_created)[0:10], '%Y-%m-%d').date()
+    #print("{},{}".format(type(time_created), type(deletion_date)))
+    #print("{}  :  {}".format(time_created,deletion_date))
+    # print(str(deletion_date))
+    # print(str(time_created))
+    time_created1 = datetime.datetime.strptime(str(time_created), '%Y-%m-%d')
+    deletion_date1 = datetime.datetime.strptime(str(deletion_date), '%Y-%m-%d')
+    if snap.tags == {'Autosnap': 'True'} and time_created1 <= deletion_date1:   #datetime.datetime.now().date():
+        print("{},{},{}".format(snap.name, time_created, deletion_date))
+        #print(snap.tags)
+        RG_Name = snap.id.split("/")[4]
+        compute_client.snapshots.delete(RG_Name,snap.name)
+        # print(RG_Name)
+        print("{} Snapshot under resource group {} has been deleted successfully!".format(snap.name,RG_Name))
+
+   
+    #print(f"time_created {time_created} type(time_created), deletion_date {deletion_date} type(deletion_date)")
+
+    
+
+# column_width = 40
+# for resource in list(snap_list):
+#     print(f"{resource.name:<{column_width}}{resource.type:<{column_width}}"
+#        f"{str(resource.timeCreated ):<1}")
+
+    
+        
+
+# snap_list=snap_list.(filter=f"tagName eq 'Autosnap' and tagValue eq 'True'")
+#filters[{'Name':'tag:Autosnap','Values':['True']}]
+
+# resources = compute_client.resources.list(filter=f"tagName eq 'Autosnap' and tagValue eq 'True'")
+#     print(resources)
+
+
+def get_vm_status(vmname,group_name):
+    vm = compute_client.virtual_machines.get(group_name, vmname, expand='instanceView')
+    vm_status = compute_client.virtual_machines.instance_view(group_name,vmname).statuses[1].code
+    return vm_status.split("/")[-1]
+
+# def stop_vm(vmname,group_name):
+#    stop_output = compute_client.virtual_machines.power_off(group_name,vmname, expand='instanceView')
+#    stop_output.wait()
+#    return stop_output
+
+# def start_vm(vmname,group_name):
+#    start_output = compute_client.virtual_machines.start(group_name,vmname, expand='instanceView')
+#    start_output.wait()
+#    return start_output
+
+def del_snap_vm(vmname,group_name):
+      snap_list=compute_client.snapshots.list_by_resource_group("<resource-group-name>")
+      begin_delete(resource_group_name, snapshot_name, **kwargs)
+
+      #filters[{'Name':'tag:Autosnap','Values':['True']}]
+#     vm = compute_client.virtual_machines.get(group_name, vmname, expand='instanceView')
+#     location = vm.location
+#     disk_dict= {'vmname':[],'disks':[]}
+#     disk_list=[]
+#     print("**********************!!!!!!!!!!")
+#     print("OS Disk ID")
+#     print(vm.storage_profile.os_disk.managed_disk.id)
+#     print("**********************!!!!!!!!!!")
+#     print()
+#     print("**********************!!!!!!!!!!")
+#     disk_list.append(vm.storage_profile.os_disk.managed_disk.id)
+#     disk_dict["vmname"].append("vm.name")
+#     disk_dict["disks"].append("vm.storage_profile.os_disk.managed_disk.name")
+#     print("Data Disk ID")
+#     ab = vm.storage_profile.data_disks
+#     for a in ab:
+#       print(a.managed_disk.id)
+#       disk_list.append(a.managed_disk.id)
+#       disk_dict["vmname"].append("vm.name")
+#       disk_dict["disks"].append("a.managed_disk.name")
+#     #print(disk_list)
+#     print("**********************!!!!!!!!!!")
+#     print()
+#     print("**********************!!!!!!!!!!")
+#     print("Starting Snapshot")
+#     for i in disk_list:
+#       disk_detail = i.split("/")
+#       disk_name = disk_detail[-1]
+#       snapname = vmname + "_" + disk_name + "_" + today_string
+#       async_snapshot_creation = compute_client.snapshots.create_or_update(
+#           group_name,
+#           snapname,
+#           {
+#               'location': location,
+#               'tags': {'Autosnap':'True'},
+#               'creation_data':{
+#                   'create_option':'Copy',
+# #                  'source_uri':'',
+#                   'source_uri':i
+#                   }
+#            }
+#       )
+#       print("Snapshot " + snapname + " created successfully!!!")
+#     print("Snapshot Completed")
+#     print("**********************!!!!!!!!!!")
+
+
+# my_vms=[]
+# f1=open("rname.txt","r")
+# my_vms=f1.readline().split(",")
+# del my_vms[-1]
+# print(my_vms)
+
+# vms = compute_client.virtual_machines.list_all()
+# print(vms)
+# for vm in vms:
+#     myvm_resource_group=""
+#     if vm.name in my_vms:
+#         print(vm.id)
+#         print(vm.name)
+#         temp_id_list=vm.id.split('/')
+#         myvm_resource_group=temp_id_list[4]
+#         print(myvm_resource_group)
+#         print("**********************!!!!!!!!!!")
+#         vm_status = get_vm_status(vm.name,myvm_resource_group)
+#         print(vm.name + " is currently " + vm_status)
+#         print("**********************!!!!!!!!!!")
+#         if vm_status=="running":
+#            print("Stopping " + vm.name + " " + stop_vm(vm.name,myvm_resource_group).status())
+#         print("**********************!!!!!!!!!!")
+#         snap_vm(vm.name,myvm_resource_group)
+#         vm_status = get_vm_status(vm.name,myvm_resource_group)
+#         if vm_status=="stopped":
+#            print("Starting " + vm.name + " " + start_vm(vm.name,myvm_resource_group).status())
