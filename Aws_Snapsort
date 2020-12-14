@@ -1,0 +1,179 @@
+import boto3
+import collections
+import datetime
+import time
+import sys
+import os.path
+from os import path
+import subprocess
+#import os
+
+today = datetime.date.today()
+today_string = today.strftime('%Y/%m/%d')
+delete_after_days = 2  # Delete snapshots after this many days
+
+# Except after Monday (at Tuesday ~1am), since Friday is only 2 'working' days away:
+if datetime.date.today().weekday() == 1:
+    delete_after_days = delete_after_days + 2
+
+deletion_date = today - datetime.timedelta(days=delete_after_days)
+deletion_date_string = deletion_date.strftime('%Y/%m/%d')
+
+print("Deleting file restoredetails.txt file")
+currdir=os.getcwd()
+file="/restoredetails.txt"
+file1=currdir+file
+if not path.exists(file1):
+    print(f"File {file1} does not exist.So program can not be executed further and it is exited")
+    exit()
+os.remove(file1)
+ec2 = boto3.client('ec2')
+#regions = ec2.describe_regions().get('Regions',[] )
+#all_regions = [region['RegionName'] for region in regions]
+file2=currdir+"/rname.txt"
+if not path.exists(file2):
+    print(f"File {file2} does not exist.This file contains name of the region.So program can not be executed further and it is exited")
+    exit()
+f1=open("rname.txt","r")
+all_regions=f1.readline().split(",")
+del all_regions[-1]
+#all_regions=['us-east-1','us-east-2']
+#for rn1 in range(len(rn)):
+    #print(rn[rn1])
+#print(all_regions)
+def create_snapshots():
+    snapshot_counter = 0
+    snap_size_counter = 0
+    #deletion_counter = 0
+    #deleted_size_counter = 0
+    try:
+     for region_name in all_regions:
+       #region_name=all_regions[rn]
+       print('Searching instances in region {0}:'.format(region_name))
+       ec2 = boto3.resource('ec2', region_name=region_name)
+       ec2c = boto3.client('ec2', region_name=region_name)
+       f = open("input.txt", "r")
+       instances_list = f.readline().split(",")
+       #print(instances_list)
+       instances = ec2.instances.filter(
+              Filters=[
+                  {
+                      'Name':'tag:Name',
+                      'Values':instances_list
+                  }])
+       print("Instances are"+" "+str(instances))
+       volume_ids = []
+       insid=" "
+       snapid=" "
+       availz=" "
+       for i in instances:
+          for tag in i.tags:  # Get the name of the instance
+              if tag['Key'] == 'Name':
+                  name = tag['Value']
+                  print("instance name is"+" "+name)
+          insid=i.id+","
+          #print(insid)
+          print('Found instance \'{1}\', in region {3} having id: {0}, state: {2}'.format(i.id, name, i.state['Name'], region_name))
+          availz=i.placement['AvailabilityZone']+","
+          rname=region_name+","
+          ec2ins = ec2.Instance(id=i.id)
+          print("Stopping ec2 instance"+" "+i.id)
+          ec2ins.stop()
+          ec2ins.wait_until_stopped()
+          print(f"Instance {insid} is successfully stopped")
+          #print('Found instance \'{1}\', id: {0}, state: {2}'.format(i.id, name, i.state['Name']))
+          vols = i.volumes.all()  # Iterate through each instance's volumes
+          #print(len(vols.id))
+          volcount=0
+          for v in vols:
+              #print('{0} is attached to volume {1}, proceeding to snapshot'.format(name, v.id))
+              print("Volume {0} is attached to instance {1},proceeding to take snapshot".format(v.id,name))
+              #volume_ids.extend(v.id)
+              volume_ids.append(v.id)
+              #print(volume_ids)
+              snapshot = v.create_snapshot(
+                  Description = 'AutoSnapshot of {0}, on volume {1} - Created {2}'.format(name, v.id, today_string),
+                  )
+              filters=[{'Name':'status','Values':['pending','completed','error']}]
+              ec2c.get_waiter('snapshot_completed').wait(SnapshotIds=[snapshot.id],Filters=filters)
+              volcount=volcount+1
+              snapshot = ec2.Snapshot(snapshot.id)
+              snapshot_status=snapshot.state+","
+              #print(snapshot_status)
+              #print("snapshot id is"+" "+snapshot.id)
+              print(f"Snapshot {snapshot.id} is successfully {snapshot_status} for volume {v.id}")
+              volid=v.id+","
+              snapid=snapshot.id+","
+              volres=ec2c.describe_volumes(VolumeIds=[v.id])
+              devicename=volres['Volumes'][0]['Attachments'][0]['Device']+","
+              head1="Instanceid,Volumeid,Snapshotid,DeviceName,AvailabilityZone,RegionName,SnapshotStatus"+"\r\n"
+              if not path.exists("restoredetails.txt"):
+                data1=head1+insid+volid+snapid+devicename+availz+rname+snapshot_status
+                f = open("restoredetails.txt", "a")
+                f.write(data1)
+                f.close()
+              else:
+                data1="\n"+insid+volid+snapid+devicename+availz+rname+snapshot_status
+                f = open("restoredetails.txt", "a")
+                f.write(data1)
+                f.close()
+              snapshot.create_tags(  # Add the following tags to the new snapshot
+                  Tags = [
+                      {
+                          'Key': 'auto_snap',
+                          'Value': 'true'
+                      },
+                      {
+                          'Key': 'volume',
+                          'Value': v.id
+                      },
+                      {
+                          'Key': 'CreatedOn',
+                          'Value': today_string
+                      },
+                       {
+                          'Key': 'From_Instance',
+                          'Value': i.id
+                      },
+
+                       {
+                          'Key': 'Name',
+                          'Value': '{} autosnap'.format(name)
+                      },
+                      {
+                          'Key': 'bkpowner',
+                          'Value': 'autosnapshot'
+                      },
+                      {
+                          'Key': 'copied',
+                          'Value': 'no'
+                      }
+                  ]
+              )
+              #print('Snapshot completed')
+              snapshot_counter += 1
+              snap_size_counter += snapshot.volume_size
+              if snapshot_counter != 0:
+                print('Made {0} snapshots totalling {1} GB'.format(snapshot_counter,snap_size_counter))
+              else:
+                print('Made {0} snapshots totalling {1} GB because instances not found in region {2}'.format(snapshot_counter,snap_size_counter,region_name))
+          vidlength=len(volume_ids)
+          #print(f"vidlength is {vidlength}")
+          #print(f"volumentcount is {volcount}")
+          if vidlength == volcount:
+            #print(f"volumelist is equal to volumecount")
+            print(f"Starting ec2 instance {i.id}")
+            ec2ins = ec2.Instance(id=i.id)
+            ec2ins.start()
+            ec2ins.wait_until_running()
+            print(f"Instance {i.id} is started")
+            volume_ids.clear()
+     print('Made {0} snapshots totalling {1} GB from all regions'.format(snapshot_counter,snap_size_counter))
+
+     return
+    except Exception as e:
+        print(type(e), ':', e)
+        pass
+
+create_snapshots()
+
