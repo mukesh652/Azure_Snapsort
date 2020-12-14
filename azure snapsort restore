@@ -1,0 +1,202 @@
+import argparse
+import os
+from azure.identity import AzureCliCredential
+from azure.mgmt.resource import ResourceManagementClient
+from azure.mgmt.network import NetworkManagementClient
+from azure.mgmt.compute import ComputeManagementClient
+from azure.mgmt.compute.models import DiskCreateOption
+from azure.common.credentials import ServicePrincipalCredentials
+from datetime import datetime
+import collections
+import datetime
+import time
+import sys
+import os.path
+from os import path
+import subprocess
+
+clientid=''
+secret=''
+tenantid=''
+#vmname='
+#group_name=''
+subscriptionid=''
+
+credential = ServicePrincipalCredentials(
+client_id=clientid,
+secret=secret,
+tenant=tenantid
+)
+
+def get_vm_status(vmname,group_name):
+    vm = compute_client.virtual_machines.get(group_name, vmname, expand='instanceView')
+    vm_status = compute_client.virtual_machines.instance_view(group_name,vmname).statuses[1].code
+    return vm_status.split("/")[-1]
+
+def stop_vm(vmname,group_name):
+    stop_output = compute_client.virtual_machines.power_off(group_name,vmname, expand='instanceView')
+    stop_output.wait()
+    return stop_output
+
+def start_vm(vmname,group_name):
+    start_output = compute_client.virtual_machines.start(group_name,vmname, expand='instanceView')
+    start_output.wait()
+    return start_output
+
+def vm_data_disk_create(vmname,group_name,data_disk):
+    snap_details=[]
+    for k in data_disk:
+        vm_snaps = compute_client.snapshots.list_by_resource_group(group_name)
+        for a in vm_snaps:
+            snap_details.append((a.name,a.id,a.time_created.strftime('%d-%m-%Y %H:%M:%S')))
+            print(snap_details)
+            snap_sort=sorted(snap_details,key=lambda x:datetime.datetime.strptime(x[2],"%d-%m-%Y %H:%M:%S"),reverse=True)
+            print()
+            print(snap_sort)
+            print()
+
+        for disk in data_disk:
+          for i in range(len(snap_sort)-1):
+            if str(snap_sort[i][0]).startswith(vmname + "_" + vmname):
+                print(snap_sort[i][0])
+                temp_id_list = snap_sort[i][1].split('/')
+                print(temp_id_list)
+                temp_name=temp_id_list[8].split('_')
+                print(temp_name)
+                snap_name=temp_name[0]+'_'+temp_name[1]
+            async_disk_create = compute_client.disks.create_or_update(group_name,snap_name + '_snap',{
+                    "location": "East US",
+                    "properties": {
+                        "creationData": {
+                        "createOption": "Copy",
+                        "sourceResourceId": snap_sort[i][1]
+                        }
+                    }
+                    })
+            async_disk_create.wait()
+            print(snap_name+'_snap data disk has been created')
+            get_result = [snap_name+'_snap',compute_client.disks.get(group_name,snap_name+'_snap').id]
+            return get_result
+
+
+def vm_os_disk_create(vmname,group_name,os_disk):
+    snap_details=[]
+    vm_snaps = compute_client.snapshots.list_by_resource_group(group_name)
+    for a in vm_snaps:
+        print(a)
+        snap_details.append((a.name,a.id,a.time_created.strftime('%d-%m-%Y %H:%M:%S')))
+        print(snap_details)
+        snap_sort=sorted(snap_details,key=lambda x:datetime.datetime.strptime(x[2],"%d-%m-%Y %H:%M:%S"),reverse=True)
+        print()
+        print(snap_sort)
+        print()
+
+    for a in os_disk:
+      for i in range(len(snap_sort)-1):
+        if str(snap_sort[i][0]).startswith(vmname + "_" + vmname + "_"):
+           print(snap_sort[i][0])
+           snap_name = vmname + "_" + vmname + "_os"
+           async_disk_create = compute_client.disks.create_or_update(group_name,snap_name + '_snap',{
+                    "location": "East US",
+                    "properties": {
+                        "creationData": {
+                        "createOption": "Copy",
+                        "sourceResourceId":snap_sort[i][1]
+                        }
+                    }
+                    })
+           async_disk_create.wait()
+           print(snap_name+'_snap data disk has been created')
+           get_result = [snap_name+'_snap',compute_client.disks.get(group_name,snap_name+'_snap').id]
+           return get_result
+           break
+        else:
+           continue
+
+my_vms=[]
+f1=open("rname.txt","r")
+my_vms=f1.readline().split(",")
+del my_vms[-1]
+print(my_vms)
+
+os_disk=[]
+data_disk=[]
+compute_client = ComputeManagementClient(credential, subscriptionid)
+'''
+vm = compute_client.virtual_machines.get(group_name, vmname, expand='instanceView')
+location = vm.location
+os_disk.append(('os_disk','vm.storage_profile.os_disk.managed_disk.id'))
+for a in vm.storage_profile.data_disks:
+    data_disk.append((a.name,a.id))
+'''
+
+vms = compute_client.virtual_machines.list_all()
+print(vms)
+
+for vma in vms:
+    myvm_resource_group=""
+    if vma.name in my_vms:
+        print(vma.id)
+        vmname= vma.name
+        temp_id_list=vma.id.split('/')
+        group_name=temp_id_list[4]
+        vm = compute_client.virtual_machines.get(group_name, vmname, expand='instanceView')
+        location = vm.location
+        os_disk.append((vm.storage_profile.os_disk.name,vm.storage_profile.os_disk.managed_disk.id))
+        for a in vm.storage_profile.data_disks:
+          data_disk.append((a.name,a.managed_disk.id))
+        print("**********************!!!!!!!!!!")
+        vm_status = get_vm_status(vm.name,group_name)
+        print(vm.name + " is currently " + vm_status)
+        print("**********************!!!!!!!!!!")
+        if vm_status=="running":
+           print("Stopping " + vm.name + " " + str(stop_vm(vm.name,group_name).status()))
+        print("**********************!!!!!!!!!!")
+        print()
+        print("Collecting OS Disk List")
+        print("OS Disk ID:" + str(os_disk))
+        print("**********************!!!!!!!!!!")
+        print()
+        print("Collecting Data Disk List")
+        print("Data_Disk ID:" + str(data_disk))
+        print("**********************!!!!!!!!!!")
+        print()
+        print("Detaching Data Disk List")
+        vm.storage_profile.data_disks=[]
+        async_vm_update = compute_client.virtual_machines.create_or_update(group_name,vmname,vm)
+        async_vm_update.wait()
+        print("**********************!!!!!!!!!!")
+        print()
+        print("Create Data Disk List")
+        print(data_disk)
+        new_disks=[]
+        l=0
+        for a in data_disk:
+          print(a)
+          result = vm_data_disk_create(vm.name,group_name,a[1])
+          vm.storage_profile.data_disks.append({
+            'lun': l,
+            'name': result[0],
+            'create_option': DiskCreateOption.attach,
+            'managed_disk': {
+                'id': result[1]
+           }})
+          l+=1
+        print("**********************!!!!!!!!!!")
+        print()
+        print("Create OS Disk")
+        print(os_disk[0][0])
+        result1=vm_os_disk_create(vm.name,group_name,os_disk[0][0])
+        print("**********************!!!!!!!!!!")
+        print()
+        print("Swap OS Disk")
+        vm.storage_profile.os_disk.managed_disk.id=result1[1]
+        vm.storage_profile.os_disk.name=str(result1[1].split('/')[-1])
+        async_vm_update = compute_client.virtual_machines.create_or_update(group_name,vmname,vm)
+        async_vm_update.wait()
+        print("OS Disk has been swapped successfully")
+        print("**********************!!!!!!!!!!")
+        print()
+        vm_status = get_vm_status(vm.name,group_name)
+        if vm_status=="stopped":
+           print("Starting " + vm.name + " " + start_vm(vm.name,group_name).status())
