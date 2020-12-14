@@ -1,0 +1,114 @@
+import sys
+import boto3
+import os.path
+from os import path
+count = 0
+ec2c = boto3.client('ec2')
+createvol=[]
+j = 0
+fname="restoredetails.txt"
+fname2="restoreinssnap.txt"
+currdir=os.getcwd()
+file1=currdir+"/"+fname
+print(file1)
+file2=currdir+"/"+fname2
+if not path.exists(file1):
+    print(f"File {fname} does not exist. So program can not be excuted further and it is exited")
+    exit()
+if not path.exists(file2):
+    print(f"File {fname2} does not exist. So program can not be excuted further and it is exited")
+    exit()
+instancecount=[]
+with open(fname, 'r') as f4:
+    flines=f4.readlines()
+    for flne in flines:
+        words = flne.split()
+        for y in words:
+          instf=y.strip().split(',')[0]
+          if "Instanceid" not in instf:
+              #print(instf)
+              instancecount.append(instf)
+ins_dict = {n:instancecount.count(n) for n in instancecount}
+createvol=[]
+with open("restoreinssnap.txt") as fp:
+    Lines = fp.readlines()
+    #print(Lines)
+    Instances = [x[:-1] for x in Lines]
+    #print(Instances)
+    rcounter=0
+    for ins1 in Instances:
+        if ins1 not in instancecount:
+            print(f"Instance id is not present.Please enter correct instance id in file {fname2}.")
+            exit()
+        #print(ins)
+        with open("restoredetails.txt") as fp1:
+          Lines1 = fp1.readlines()
+          #print(Lines1)
+          for line in Lines1:
+              ins2=line.strip().split(',')[0]
+              #print(ins2)
+              if ins1 == ins2:
+                if ins1 in ins_dict:
+                  rescount=ins_dict[ins1]
+                volid=line.strip().split(',')[1]
+                snapid=line.strip().split(',')[2]
+                devicen=line.strip().split(',')[3]
+                az=line.strip().split(',')[4]
+                region=line.strip().split(',')[5]
+                try:
+                 print(f"Creating volumes from snapshots {snapid}")
+                 vres=ec2c.create_volume(AvailabilityZone=az,SnapshotId=snapid)
+                 if vres['ResponseMetadata']['HTTPStatusCode']== 200:
+                   volume_id= vres['VolumeId']
+                   print('***volume:', volume_id)
+                   ec2c.get_waiter('volume_available').wait(VolumeIds=[volume_id],DryRun=False)
+                   print('***Success!! volume:', volume_id, f'created...from snapshot {snapid}')
+                   createvol.append(volume_id)
+                except Exception as e:
+                  print('***Failed to create the volume...')
+                  print(type(e), ':', e)
+                  exit()
+                if volume_id:
+                  ec2r = boto3.resource('ec2',region_name=region)
+                  ec2ins = ec2r.Instance(id=ins1)
+                  print("Stopping ec2 instance"+" "+ins1)
+                  ec2ins.stop()
+                  ec2ins.wait_until_stopped()
+                  print(f"Instance {ins1} is stopped")
+                  rcounter=rcounter+1
+                  print(f"Listing instance {ins1} volumes")
+                  instance = ec2r.Instance(ins1)
+                  volumes = instance.volumes.all()
+                  remvols = [v.id for v in volumes]
+                  for remvol in remvols:
+                    if remvol not in createvol:
+                     remvol=''.join(remvol)
+                     print(f"Detaching volumes {remvol} from instance {ins1}")
+                     detachv = ec2c.detach_volume(VolumeId=remvol)
+                     ec2c.get_waiter('volume_available').wait(VolumeIds=[remvol])
+                     print(f"Volume {remvol} is successfully detached")
+                    else:
+                     print("No volumes to detach as all old volumes are already removed")
+                  try:
+                    attachv = ec2c.attach_volume(VolumeId=volume_id,InstanceId=ins1,Device=devicen)
+                    if attachv['ResponseMetadata']['HTTPStatusCode']== 200:
+                      ec2c.get_waiter('volume_in_use').wait(
+                        VolumeIds=[volume_id],
+                        DryRun=False
+                     )
+                      print('***Success!! volume:', volume_id, 'is attached to instance:',ins1)
+                  except Exception as e:
+                     print('***Error - Failed to attach volume:', volume_id, 'to the instance:', ins1)
+                     print(type(e), ':', e)
+                  if rescount == rcounter:
+                      print(f"Value of restart count is {rescount}")
+                      print(f"Value of restart counter is {rcounter}")
+                      print("Starting ec2 instance"+" "+ins1)
+                      ec2ins.start()
+                      ec2ins.wait_until_running()
+                      print(f"Instance {ins1} is started")
+                      rcounter=0
+                  else:
+                      print(f"Value of restart count is {rescount}")
+                      print(f"Value of restart counter is {rcounter}")
+                      print(f"Instance {ins1} is not started because all volumes for instance is not restored")
