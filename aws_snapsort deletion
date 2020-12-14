@@ -1,0 +1,52 @@
+import boto3
+import collections
+import datetime
+import time
+import sys
+import os.path
+from os import path
+import subprocess
+#import os
+ec2c=boto3.client('ec2')
+ec2r=boto3.resource('ec2')
+
+today = datetime.date.today()
+print(today)
+today_string = today.strftime('%Y/%m/%d')
+print("Today date is"+" "+today_string)
+delete_after_days = 2  #Delete snapshots after this many days
+snapshot_counter = 0
+snap_size_counter = 0
+deletion_counter = 0
+deleted_size_counter = 0
+# Except after Monday (at Tuesday ~1am), since Friday is only 2 'working' days away:
+print("weekday is"+" "+str(datetime.date.today().weekday()))
+if datetime.date.today().weekday() == 1:
+    print(datetime.date.today().weekday())
+    delete_after_days = delete_after_days + 2
+deletion_date = today - datetime.timedelta(days=delete_after_days)
+print("Deletion date is"+" "+str(deletion_date))
+deletion_date_string = deletion_date.strftime('%Y/%m/%d')
+print(deletion_date_string)
+filters=[{'Name': 'tag:auto_snap', 'Values': ['true']}]
+snapshots = ec2r.snapshots.filter(Filters= filters)
+#print('Checking for out of date snapshots for instance {0}...'.format(name))
+for snap in snapshots:
+   can_delete = False
+   for tag in snap.tags:
+      if tag['Key'] == 'CreatedOn':
+         created_on_string = tag['Value']
+      if tag['Key'] == 'auto_snap':
+           if tag['Value'] == 'true':
+               can_delete = True
+      if tag['Key'] == 'Name':
+          name = tag['Value']
+   created_on = datetime.datetime.strptime(created_on_string, '%Y/%m/%d').date()
+   #print(created_on)
+   if created_on <= deletion_date and can_delete == True:
+       print('Snapshot having id {0},and name {1} which is created on {2} and are {3} days old are getting deleted'.format(snap.id, name, created_on_string, delete_after_days))
+       deleted_size_counter += snap.volume_size
+       snap.delete()
+       deletion_counter += 1
+   else:
+       print('Snapshot having id {0} and name {1} which is created on {2} are not {3} days old ...so not deleting them'.format(snap.id, name, created_on_string, delete_after_days))
